@@ -1,5 +1,8 @@
 use regex::{Match, Matches, Regex};
-use std::{fs, str};
+use std::{fs, str, collections::HashMap};
+
+mod counter;
+use counter::{Counter, Update};
 
 struct RegexInclusiveSplit<'t, 'r> {
     text: &'t str,
@@ -78,10 +81,15 @@ impl<'t, 'r> Iterator for TokenTransitions<'t, 'r> {
 }
 
 fn main() {
-    let input_text = fs::read_to_string("neuromancer.txt").unwrap();
-    let token_delimiter_re = Regex::new(r#"(([\.,:]?( |\t|\n)+)|--|")"#).unwrap();
+    let input_text = fs::read_to_string("neuromancer.txt").unwrap().to_ascii_lowercase();
+    let token_delimiter_re = Regex::new(r#"(([\.,:\?]?( |\t|\n|")+)|--)"#).unwrap();
     let mut token_it = RegexInclusiveSplit::new(&input_text, &token_delimiter_re);
-    for transition in TokenTransitions::new(&mut token_it) {
-        println!("{:?}", transition);
+    let mut transition_counts = HashMap::<String, Counter>::new();
+
+    TokenTransitions::new(&mut token_it).for_each(
+	|(ltoken, rtoken)| transition_counts.entry(ltoken.to_string()).or_insert(Counter::new()).update(rtoken.to_string())
+    );
+    for count in transition_counts {
+        println!("{:?}", count);
     }
 }
