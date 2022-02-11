@@ -1,5 +1,7 @@
+use rand::distributions::WeightedIndex;
 use regex::{Match, Matches, Regex};
-use std::{fs, str, collections::HashMap};
+use rustc_hash::FxHashMap;
+use std::{fs, str};
 
 mod counter;
 use counter::{Counter, Update};
@@ -30,19 +32,21 @@ impl<'t, 'r> Iterator for RegexInclusiveSplit<'t, 'r> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(regex_match) = self.last_match_consumed {
             let last_match_consumed_start = regex_match.start();
-            if self.reported_index < last_match_consumed_start {
-                // In between separators
-                let retval = &self.text[self.reported_index..last_match_consumed_start];
-                self.reported_index = last_match_consumed_start;
-                return Some(retval);
-            } else if self.reported_index == last_match_consumed_start {
-                // On a separator
-                let retval = &regex_match.as_str();
-                self.reported_index = regex_match.end();
-                self.last_match_consumed = self.it.next();
-                return Some(retval);
-            } else {
-                panic!("Should be unreachable");
+            match last_match_consumed_start {
+                start if start > self.reported_index => {
+                    // In between separators
+                    let retval = &self.text[self.reported_index..last_match_consumed_start];
+                    self.reported_index = last_match_consumed_start;
+                    return Some(retval);
+                }
+                start if start == self.reported_index => {
+                    // On a separator
+                    let retval = &regex_match.as_str();
+                    self.reported_index = regex_match.end();
+                    self.last_match_consumed = self.it.next();
+                    return Some(retval);
+                }
+                _ => panic!("Should be unreachable"),
             }
         } else {
             None
@@ -57,39 +61,59 @@ struct TokenTransitions<'t, 'r> {
 
 impl<'t, 'r> TokenTransitions<'t, 'r> {
     fn new(token_it: &'t mut RegexInclusiveSplit<'t, 'r>) -> Self {
-	let last_token = token_it.next().unwrap();
-	TokenTransitions {
-	    token_it,
-	    last_token
-	}
+        let last_token = token_it.next().unwrap();
+        TokenTransitions {
+            token_it,
+            last_token,
+        }
     }
 }
-	
+
 impl<'t, 'r> Iterator for TokenTransitions<'t, 'r> {
     type Item = (&'t str, &'t str);
 
     fn next(&mut self) -> Option<Self::Item> {
-	while let Some(next_token) = self.token_it.next() {
-	    if next_token == " " { continue };  // We're ignoring other tokens with spaces like ". " for now
-
-	    let retval = (self.last_token, next_token);
-	    self.last_token = next_token;
-	    return Some(retval)
-	}
-	return None
+        self.token_it.skip_while(|x| *x == " ");
+        if let Some(next_token) = self.token_it.next() {
+            let retval = (self.last_token, next_token);
+            self.last_token = next_token;
+            return Some(retval);
+        } else {
+            return None;
+        }
     }
 }
 
 fn main() {
-    let input_text = fs::read_to_string("neuromancer.txt").unwrap().to_ascii_lowercase();
+    let input_text = fs::read_to_string("neuromancer.txt")
+        .unwrap()
+        .to_ascii_lowercase();
     let token_delimiter_re = Regex::new(r#"(([\.,:\?]?( |\t|\n|")+)|--)"#).unwrap();
-    let mut token_it = RegexInclusiveSplit::new(&input_text, &token_delimiter_re);
-    let mut transition_counts = HashMap::<String, Counter>::new();
 
-    TokenTransitions::new(&mut token_it).for_each(
-	|(ltoken, rtoken)| transition_counts.entry(ltoken.to_string()).or_insert(Counter::new()).update(rtoken.to_string())
-    );
-    for count in transition_counts {
-        println!("{:?}", count);
+    let mut token_it = RegexInclusiveSplit::new(&input_text, &token_delimiter_re);
+    let mut transition_counts = FxHashMap::<String, Counter>::default();
+    TokenTransitions::new(&mut token_it).for_each(|(ltoken, rtoken)| {
+        transition_counts
+            .entry(ltoken.to_string())
+            .or_insert_with(Counter::default)
+            .update(rtoken.to_string())
+    });
+
+    let mut token_transitions = FxHashMap::<String, Vec<&String>>::default(); // Horrible name, not to be mixed up with the iterator
+    for (ltoken, rtoken_counts) in &transition_counts {
+        token_transitions.insert(
+            ltoken.to_string(),
+            rtoken_counts.keys().collect::<Vec<&String>>(),
+        );
+    }
+
+    let mut token_weights = FxHashMap::<String, WeightedIndex<_>>::default();
+    for (ltoken, rtoken_counts) in &transition_counts {
+        let weights = rtoken_counts.values().copied().collect::<Vec<i32>>();
+        token_weights.insert(ltoken.to_string(), WeightedIndex::new(&weights).unwrap());
+    }
+
+    for weights in token_weights {
+        println!("{:?}", weights);
     }
 }
