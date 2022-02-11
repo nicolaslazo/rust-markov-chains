@@ -1,4 +1,7 @@
-use rand::distributions::WeightedIndex;
+use rand::{
+    distributions::{Distribution, WeightedIndex},
+    thread_rng,
+};
 use regex::{Match, Matches, Regex};
 use rustc_hash::FxHashMap;
 use std::{fs, str};
@@ -73,8 +76,7 @@ impl<'t, 'r> Iterator for TokenTransitions<'t, 'r> {
     type Item = (&'t str, &'t str);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.token_it.skip_while(|x| *x == " ");
-        if let Some(next_token) = self.token_it.next() {
+        if let Some(next_token) = self.token_it.find(|x| *x != " ") {
             let retval = (self.last_token, next_token);
             self.last_token = next_token;
             return Some(retval);
@@ -88,7 +90,7 @@ fn main() {
     let input_text = fs::read_to_string("neuromancer.txt")
         .unwrap()
         .to_ascii_lowercase();
-    let token_delimiter_re = Regex::new(r#"(([\.,:\?]?( |\t|\n|")+)|--)"#).unwrap();
+    let token_delimiter_re = Regex::new(r#"(([\.,:\?;]?( |\t|\n|")+)|--)"#).unwrap();
 
     let mut token_it = RegexInclusiveSplit::new(&input_text, &token_delimiter_re);
     let mut transition_counts = FxHashMap::<String, Counter>::default();
@@ -113,7 +115,12 @@ fn main() {
         token_weights.insert(ltoken.to_string(), WeightedIndex::new(&weights).unwrap());
     }
 
-    for weights in token_weights {
-        println!("{:?}", weights);
+    let mut rng = thread_rng();
+    let mut current_token = "the";
+
+    for _ in 0..90 {
+        println!("{}", current_token);
+        let next_index = token_weights[current_token].sample(&mut rng);
+        current_token = token_transitions[current_token][next_index];
     }
 }
