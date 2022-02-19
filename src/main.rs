@@ -1,5 +1,7 @@
+use clap::Parser;
 use rand::{
     distributions::{Distribution, WeightedIndex},
+    seq::IteratorRandom,
     thread_rng,
 };
 use regex::{Match, Matches, Regex};
@@ -8,6 +10,25 @@ use std::{fs, str};
 
 mod counter;
 use counter::{Counter, Update};
+
+#[derive(Parser, Debug)]
+#[clap(name = "Markov chain generator")]
+#[clap(about = "Generates strings of text based on a source file", long_about = None)]
+struct Args {
+    #[clap(help = "Source file to read from")]
+    source: String,
+
+    #[clap(
+        short,
+        long,
+        help = "Number of tokens to attempt to generate",
+        default_value_t = 128
+    )]
+    num_tokens: usize,
+
+    #[clap(short, long, help = "Token to start with")]
+    start: Option<String>,
+}
 
 struct RegexInclusiveSplit<'t, 'r> {
     text: &'t str,
@@ -40,14 +61,14 @@ impl<'t, 'r> Iterator for RegexInclusiveSplit<'t, 'r> {
                     // In between separators
                     let retval = &self.text[self.reported_index..last_match_consumed_start];
                     self.reported_index = last_match_consumed_start;
-                    return Some(retval);
+                    Some(retval)
                 }
                 start if start == self.reported_index => {
                     // On a separator
                     let retval = &regex_match.as_str();
                     self.reported_index = regex_match.end();
                     self.last_match_consumed = self.it.next();
-                    return Some(retval);
+                    Some(retval)
                 }
                 _ => panic!("Should be unreachable"),
             }
@@ -79,18 +100,20 @@ impl<'t, 'r> Iterator for TokenTransitions<'t, 'r> {
         if let Some(next_token) = self.token_it.find(|x| *x != " ") {
             let retval = (self.last_token, next_token);
             self.last_token = next_token;
-            return Some(retval);
+            Some(retval)
         } else {
-            return None;
+            None
         }
     }
 }
 
 fn main() {
-    let input_text = fs::read_to_string("neuromancer.txt")
+    let args = Args::parse();
+
+    let input_text = fs::read_to_string(args.source)
         .unwrap()
         .to_ascii_lowercase();
-    let token_delimiter_re = Regex::new(r#"(([\.,:\?;]?( |\t|\n|")+)|--)"#).unwrap();
+    let token_delimiter_re = Regex::new(r#"((([\.,:\?;]|\.\.\.)?( |\t|\n|")+)|--)"#).unwrap();
 
     let mut token_it = RegexInclusiveSplit::new(&input_text, &token_delimiter_re);
     let mut transition_counts = FxHashMap::<String, Counter>::default();
@@ -116,10 +139,12 @@ fn main() {
     }
 
     let mut rng = thread_rng();
-    let mut current_token = "the";
-
-    for _ in 0..90 {
-        println!("{}", current_token);
+    let mut current_token = args
+        .start
+        .as_deref()
+        .unwrap_or_else(|| token_transitions.keys().choose(&mut rng).unwrap());
+    for _ in 0..args.num_tokens {
+        print!("{} ", current_token);
         let next_index = token_weights[current_token].sample(&mut rng);
         current_token = token_transitions[current_token][next_index];
     }
